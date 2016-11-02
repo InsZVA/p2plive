@@ -3,7 +3,6 @@ package main
 import (
 	"encoding/json"
 	"io/ioutil"
-	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -32,15 +31,6 @@ var Trackers = make(map[int][]TrackerServer)
 
 // Region mutex to protect a region servers's read & write
 var RegionMutex = make(map[int]sync.RWMutex)
-
-func Log(prefix string, source string, msg interface{}) {
-	source_bytes := []rune(source)
-	if (len(source_bytes) > 0) && source_bytes[0] >= 'a' && source_bytes[0] <= 'z' {
-		source_bytes[0] = source_bytes[0] + 'A' - 'a'
-	}
-	source = string(source_bytes)
-	log.Println("["+strings.ToUpper(prefix)+"]", source+":", msg)
-}
 
 func AddTracker(name string, region int, address string) {
 	if trackers, ok := Trackers[region]; !ok || trackers == nil {
