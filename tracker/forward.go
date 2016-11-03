@@ -19,9 +19,9 @@ const (
 )
 
 type ForwardServer struct {
-	// Push stream to this address
+	// Coordinate Push stream to this address
 	PushStreamAddress string
-	// Pull stream from this address(websocket&http load request)
+	// Clients Pull stream from this address(websocket&http load request)
 	PullStreamAddress string
 
 	Load   int
@@ -32,6 +32,7 @@ var (
 	Forwards             = []ForwardServer{}
 	ConfigFileLastModify time.Time
 	ForwardsMutex        = sync.Mutex{}
+	ForwardsAvaliable    = 0
 )
 
 func ForwardsUpdate() {
@@ -116,6 +117,7 @@ func ForwardHandler(w http.ResponseWriter, r *http.Request) {
 func CollectInfo() {
 	ForwardsMutex.Lock()
 	defer ForwardsMutex.Unlock()
+	fowardAvailable := 0
 	for _, f := range Forwards {
 		c := http.Client{
 			Transport: &http.Transport{
@@ -149,5 +151,7 @@ func CollectInfo() {
 		}
 		f.Load = load
 		f.Status = FORWARD_RUNNING
+		forwardsAvaliable++
 	}
+	ForwardsAvaliable = fowardAvailable
 }

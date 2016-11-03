@@ -18,6 +18,6 @@ func Log(prefix string, source string, msg interface{}) {
 func main() {
 	http.HandleFunc("/tracker", TrackerHandler)
 	http.HandleFunc("/stream", StreamHandler)
-	http.HandleFunc("/debug", CmdHandler)
+	http.HandleFunc("/debug", DebugHandler)
 	http.ListenAndServe(":8080", nil)
 }
