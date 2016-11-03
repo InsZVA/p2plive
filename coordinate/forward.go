@@ -56,7 +56,7 @@ func UpdateForwards() {
 		mutex := RegionMutex[r]
 		mutex.RLock()
 		for _, t := range trackers {
-			resp, err := http.Get(t.Address + "/forward")
+			resp, err := http.Get("http://" + t.Address + "/forward")
 			if err != nil {
 				Log("error", "forward", err)
 				continue

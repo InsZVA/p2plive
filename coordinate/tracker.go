@@ -49,7 +49,18 @@ func AddTracker(name string, region int, address string) {
 			},
 		}
 	} else {
+		// Prevent re-register
 		mutex := RegionMutex[region]
+		mutex.RLock()
+		for _, t := range trackers {
+			if t.Name == name && t.Address == address {
+				Log("warning", "tracker", name+"@"+address+" Already Registered!")
+				mutex.RUnlock()
+				return
+			}
+		}
+		mutex.RUnlock()
+
 		mutex.Lock()
 		defer mutex.Unlock()
 		Trackers[region] = append(Trackers[region],
@@ -97,6 +108,7 @@ func DeleteTracker(name string, region int, address string) int {
 				mutex.RUnlock()
 				trackers[i].Status = TRACKER_SERVER_CLOSING // WLock may block long, change the status first
 				mutex.Lock()
+				Log("info", "tracker", t.Name+"@"+t.Address+" Close")
 				trackers = append(trackers[0:i], trackers[i+1:]...)
 				if len(trackers) == 0 {
 					delete(RegionMutex, region)
