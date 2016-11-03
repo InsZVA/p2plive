@@ -180,3 +180,9 @@ func ResourceHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 }
+
+/*
+	有几点需要注意一下
+	不能出现A拉B B同时拉A
+	避免A拉到的两个源之间不同步过大
+*/
