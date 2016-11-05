@@ -140,3 +140,9 @@ func main() {
 	http.HandleFunc("/resource", ResourceHandler)
 	http.ListenAndServe(":9090", nil)
 }
+
+/*
+	TODO
+	To server address should be removed so that tracker server can inside NAT,
+	server will not send packet to tracker or use websocket
+*/

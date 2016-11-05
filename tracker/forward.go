@@ -81,7 +81,7 @@ func ForwardsUpdate() {
 		})
 	}
 	ForwardsMutex.Lock()
-	copy(Forwards, updated)
+	Forwards = append([]ForwardServer{}, updated...)
 	ForwardsMutex.Unlock()
 }
 
@@ -117,7 +117,7 @@ func ForwardHandler(w http.ResponseWriter, r *http.Request) {
 func CollectInfo() {
 	ForwardsMutex.Lock()
 	defer ForwardsMutex.Unlock()
-	fowardAvailable := 0
+	forwardsAvaliable := 0
 	for _, f := range Forwards {
 		c := http.Client{
 			Transport: &http.Transport{
@@ -153,5 +153,5 @@ func CollectInfo() {
 		f.Status = FORWARD_RUNNING
 		forwardsAvaliable++
 	}
-	ForwardsAvaliable = fowardAvailable
+	ForwardsAvaliable = forwardsAvaliable
 }

@@ -12,7 +12,9 @@ import (
 
 const (
 	FORWARD_UPDATE_INTERVAL = 3600
+)
 
+const (
 	FORWARD_READY = iota
 	FORWARD_UPDATING
 	FORWARD_UPDATED
@@ -52,6 +54,7 @@ func UpdateForwards() {
 	if UpdateState != FORWARD_READY {
 		return
 	}
+	ForwardsUpdating = []string{}
 	for r, trackers := range Trackers {
 		mutex := RegionMutex[r]
 		mutex.RLock()
@@ -61,7 +64,7 @@ func UpdateForwards() {
 				Log("error", "forward", err)
 				continue
 			}
-			resp.Body.Close()
+			defer resp.Body.Close()
 			data, err := ioutil.ReadAll(resp.Body)
 			if err != nil {
 				Log("error", "forward", err)
@@ -88,7 +91,7 @@ func ApplyUpdate() {
 	if UpdateState != FORWARD_UPDATED {
 		return
 	}
-	copy(Forwards, ForwardsUpdating)
+	Forwards = append([]string{}, ForwardsUpdating...)
 	ForwardLastUpdateTime = time.Now()
 	UpdateState = FORWARD_READY
 }

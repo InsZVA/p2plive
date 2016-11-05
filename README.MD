@@ -10,7 +10,7 @@ To reduce load of many live stream server using Point to Point transport.
 
 ## Push Stream
 
-ffmpeg -s 640x480 -f vfwcap -i 0 -r 30 -f mpeg1video -vf "crop=iw-mod(iw\,2):ih-mod(ih\,2)" -b 3000K -r 30 http://localhost:
+ffmpeg -s 640x480 -f vfwcap -i 0 -r 30 -f mpeg1video -vf "crop=iw-mod(iw\,2):ih-mod(ih\,2)" -b 3000K -r 30 http://localhost:8080/stream
 
 ## Design
 

@@ -48,7 +48,7 @@ var (
 	ClientsMutex = sync.Mutex{}
 )
 
-func NewClient(ipaddress string, conn *websocket.Conn) *UserAgent {
+func NewClient(ipaddress string, conn *websocket.Conn) {
 	ClientsMutex.Lock()
 	defer ClientsMutex.Unlock()
 	userAgent := UserAgent{
@@ -77,7 +77,7 @@ func RemoveClient(ipaddress string) {
 func PeekSourceClient() string {
 	ClientsMutex.Lock()
 	if len(Clients) < FORWARD_BEST_SERVICE_NUM*ForwardsAvaliable {
-		return nil
+		return ""
 	}
 	count := 0
 	best := ""
@@ -119,15 +119,15 @@ func ResourceHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	atomic.AddInt64(&Load, 1)
-	defer func() {
-		atomic.AddInt64(&Load, -1)
-	}()
-
 	if Load >= MAX_LOAD {
 		w.WriteHeader(503)
 		return
 	}
+
+	atomic.AddInt64(&Load, 1)
+	defer func() {
+		atomic.AddInt64(&Load, -1)
+	}()
 
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
@@ -136,13 +136,13 @@ func ResourceHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	ipaddress := strings.Split(r.RemoteAddr, ":")[0]
 	NewClient(ipaddress, conn)
-	defer conn.Close(ipaddress)
+	defer conn.Close()
 	defer recover()
 
 	for {
 		msg := make(map[string]interface{})
 		err := conn.ReadJSON(&msg)
-		if websocket.IsCloseError(err, WS_CLOSE_ERROR_CODES) {
+		if websocket.IsCloseError(err, WS_CLOSE_ERROR_CODES...) {
 			RemoveClient(ipaddress)
 			conn.Close()
 			return
@@ -162,20 +162,27 @@ func ResourceHandler(w http.ResponseWriter, r *http.Request) {
 		case "getSource":
 			if Clients[ipaddress].PullNum < 2 {
 				pusherIpAddress := PeekSourceClient()
-				if pusherAddress == "" {
-					forwardAddress := PeekSourceServer()
-					Clients[ipaddress].ForwardTimes = 1
-					Clients[ipaddress].PullNum = 1
+				if pusherIpAddress == "" {
+					//forwardAddress := PeekSourceServer()
+					c := Clients[ipaddress]
+					c.ForwardTimes = 1
+					c.PullNum = 1
+					Clients[ipaddress] = c
+					// TODO Make forward connecttion
 				} else {
-					MakePeerConnection(ipaddress, pusherAddress)
+					MakePeerConnection(ipaddress, pusherIpAddress)
 				}
 			}
 		case "update":
-			if pullNum, ok := msg["pullNum"]; ok {
-				Clients[ipaddress].PullNum = pullNum
+			if pullNum, ok := msg["pullNum"].(float64); ok {
+				c := Clients[ipaddress]
+				c.PullNum = int(pullNum)
+				Clients[ipaddress] = c
 			}
-			if pushNum, ok := msg["pushNum"]; ok {
-				Clients[ipaddress].PushNum = pushNum
+			if pushNum, ok := msg["pushNum"].(float64); ok {
+				c := Clients[ipaddress]
+				c.PushNum = int(pushNum)
+				Clients[ipaddress] = c
 			}
 		}
 	}

@@ -62,7 +62,7 @@ func AddTracker(name string, region int, address string) {
 		mutex.RUnlock()
 
 		mutex.Lock()
-		defer mutex.Unlock()
+
 		Trackers[region] = append(Trackers[region],
 			TrackerServer{
 				Name:          name,
@@ -73,11 +73,21 @@ func AddTracker(name string, region int, address string) {
 				Load:          0,
 			},
 		)
+		mutex.Unlock()
 	}
 	Log("info", "tracker", name+"@"+address+" Register")
+	if UpdateState == FORWARD_READY {
+		go UpdateForwards()
+	}
 }
 
 func UpdateTracker(name string, region int, address string, load int, ctime int64) int {
+	defer func() {
+		if ForwardLastUpdateTime.Add(FORWARD_UPDATE_INTERVAL*time.Second).Before(time.Now()) &&
+			UpdateState == FORWARD_READY {
+			go UpdateForwards()
+		}
+	}()
 	if trackers, ok := Trackers[region]; ok && trackers != nil {
 		mutex := RegionMutex[region]
 		mutex.RLock()
