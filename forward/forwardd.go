@@ -61,18 +61,18 @@ func PushHanler() {
 	n, _, err := conn.ReadFromUDP(buff)
 	for err == nil {
 		//TODO optimize to a special write thread
-		go func() {
-			ClientsMutex.Lock()
-			for _, c := range Clients {
-				if c.Status != CLIENT_INLINE {
-					continue
-				}
-				c.Mutex.Lock()
-				c.Conn.WriteMessage(websocket.BinaryMessage, buff[0:n])
-				c.Mutex.Unlock()
+		//go func() {
+		ClientsMutex.Lock()
+		for _, c := range Clients {
+			if c.Status != CLIENT_INLINE {
+				continue
 			}
-			ClientsMutex.Unlock()
-		}()
+			c.Mutex.Lock()
+			c.Conn.WriteMessage(websocket.BinaryMessage, buff[0:n])
+			c.Mutex.Unlock()
+		}
+		ClientsMutex.Unlock()
+		//}()
 		Log("info", "stream", "Read "+strconv.Itoa(n)+" size stream")
 		n, _, err = conn.ReadFromUDP(buff)
 	}
