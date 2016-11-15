@@ -49,3 +49,9 @@ Auto fix net
 ### Forward Server
 
 The Forward Server pull stream from CoOrdinate Server and push to client, keep connection with tracker to help tracker work.
+
+### Client
+
+Client first send http get request to CoOrdinate Server to get a tracker server nearby. Then client request Tracker to get a 
+live stream source. The tracker will tell client to get from another 2 clients or forward server directly, also make client to
+ push stream to another clients.

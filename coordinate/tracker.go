@@ -166,6 +166,8 @@ func LookupRegion(address string) int { // Warning: IpV4 only
 	DELETE: tracker delete itself
 */
 func TrackerHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+
 	switch r.Method {
 	case "POST":
 		defer r.Body.Close()

@@ -16,7 +16,7 @@ const (
 	// The number the forward server can service best
 	// If clients number is less than it,
 	// client will pull from forward server directly
-	FORWARD_BEST_SERVICE_NUM = 1
+	FORWARD_BEST_SERVICE_NUM = 4
 
 	USERAGENT_MAX_PUSHNUM = 2
 
@@ -56,18 +56,21 @@ func NewClient(ipaddress string, conn *websocket.Conn) {
 		ForwardTimes: 0,
 		Delay:        []int{},
 		Conn:         conn,
+		PullNum:      0,
+		PushNum:      0,
 	}
 	Clients[ipaddress] = userAgent
-	return
+	Log("info", "resource", "client:"+ipaddress+" has connected.")
 }
 
 func RemoveClient(ipaddress string) {
 	ClientsMutex.Lock()
+	defer ClientsMutex.Unlock()
 	if c, ok := Clients[ipaddress]; ok {
 		c.Status = USERAGENT_AWAY
 		delete(Clients, ipaddress)
 	}
-	ClientsMutex.Unlock()
+	Log("info", "resource", "client:"+ipaddress+" has been removed.")
 }
 
 /*
@@ -76,6 +79,7 @@ func RemoveClient(ipaddress string) {
 */
 func PeekSourceClient() string {
 	ClientsMutex.Lock()
+	defer ClientsMutex.Unlock()
 	if len(Clients) < FORWARD_BEST_SERVICE_NUM*ForwardsAvaliable {
 		return ""
 	}
@@ -136,21 +140,20 @@ func ResourceHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	ipaddress := strings.Split(r.RemoteAddr, ":")[0]
 	NewClient(ipaddress, conn)
-	defer conn.Close()
-	defer recover()
+	defer func() {
+		conn.Close()
+		RemoveClient(ipaddress)
+	}()
 
 	for {
 		msg := make(map[string]interface{})
 		err := conn.ReadJSON(&msg)
-		if websocket.IsCloseError(err, WS_CLOSE_ERROR_CODES...) {
-			RemoveClient(ipaddress)
-			conn.Close()
+		if err != nil {
 			return
 		}
-		if err != nil {
-			Log("error", "resource", err)
-			continue
-		}
+		//		if websocket.IsCloseError(err, WS_CLOSE_ERROR_CODES...) { //IsCloseError function has some problems to check
+		//			return
+		//		}
 
 		method, ok := msg["method"].(string)
 		if !ok {
@@ -168,7 +171,11 @@ func ResourceHandler(w http.ResponseWriter, r *http.Request) {
 					c.ForwardTimes = 1
 					c.PullNum = 1
 					Clients[ipaddress] = c
-					// TODO Make forward connecttion
+					// Make forward connecttion
+					resp := make(map[string]interface{})
+					resp["type"] = "directPull"
+					resp["address"] = PeekSourceServer()
+					conn.WriteJSON(resp)
 				} else {
 					MakePeerConnection(ipaddress, pusherIpAddress)
 				}

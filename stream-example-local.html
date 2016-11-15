@@ -32,12 +32,39 @@
 	</canvas>
 	<script type="text/javascript" src="jsmpg.js"></script>
 	<script type="text/javascript" src="decoder.js"></script>
+	<script src="http://cdn.bootcss.com/jquery/3.1.1/jquery.min.js"></script>
 	<script type="text/javascript">
-		// Setup the WebSocket connection and start the player
-		var client = new WebSocket( 'ws://222.205.37.250:9998/' );
+		var trackerAddress, forwardAddress, trackerWS;
+		var client = {
+			pullNum: 0,	//the number of clients this client pull from
+			pushNum: 0 //the number of clients this client push to
+		};
+		var getSourceTimer;
+		$.get("http://127.0.0.1:8080/tracker", function(data) {
+			trackerAddress = data;
+			console.log("选择" + trackerAddress + "作为Tracker服务器\n");
+			trackerWS = new WebSocket( 'ws://' + trackerAddress + "/resource");
+			trackerWS.onmessage = function(event) {
+				msg = JSON.parse(event.data);
+				switch (msg.type) {
+					case "directPull":
+						clearInterval(getSourceTimer);
+						forwardAddress = msg.address;
+						// Setup the WebSocket connection and start the player
+						var client = new WebSocket( 'ws://127.0.0.1:9998/' );
 
-		var canvas = document.getElementById('videoCanvas');
-		var player = new decoder(client, {canvas:canvas});
+						var canvas = document.getElementById('videoCanvas');
+						var player = new decoder(client, {canvas:canvas});
+				}
+			};
+			trackerWS.onopen = function() {
+				getSourceTimer = setInterval(function() {trackerWS.send(JSON.stringify({method: "getSource"}));},
+					500
+				);
+			}
+		});
+
+
 	</script>
 </body>
 </html>
