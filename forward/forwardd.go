@@ -57,7 +57,7 @@ func PushHanler() {
 		Log("err", "stream", err)
 	}
 
-	buff := make([]byte, 4096+128)
+	buff := make([]byte, 32768+128)
 	n, _, err := conn.ReadFromUDP(buff)
 	for err == nil {
 		//TODO optimize to a special write thread
@@ -65,6 +65,7 @@ func PushHanler() {
 		ClientsMutex.Lock()
 		for _, c := range Clients {
 			if c.Status != CLIENT_INLINE {
+				Log("warning", "stream", "offline")
 				continue
 			}
 			c.Mutex.Lock()
@@ -73,7 +74,7 @@ func PushHanler() {
 		}
 		ClientsMutex.Unlock()
 		//}()
-		Log("info", "stream", "Read "+strconv.Itoa(n)+" size stream")
+		//Log("info", "stream", "Read "+strconv.Itoa(n)+" size stream")
 		n, _, err = conn.ReadFromUDP(buff)
 	}
 	Log("error", "stream", err)
@@ -84,8 +85,8 @@ func InserClient(conn *websocket.Conn) int {
 	defer ClientsMutex.Unlock()
 	for i, c := range Clients {
 		if c.Status != CLIENT_INLINE {
-			c.Conn = conn
-			c.Status = CLIENT_INLINE
+			Clients[i].Conn = conn
+			Clients[i].Status = CLIENT_INLINE
 			return i
 		}
 	}
@@ -118,10 +119,12 @@ func WSHandler(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	index := InserClient(conn)
+	Log("info", "wshandler", "Client "+conn.RemoteAddr().String()+" has come, index:"+strconv.Itoa(index))
 
 	for {
 		_, _, err := conn.ReadMessage()
 		if websocket.IsCloseError(err, WS_CLOSE_ERROR_CODES...) {
+			Log("info", "wshandler", "Client "+conn.RemoteAddr().String()+" has gone.")
 			Clients[index].Status = CLIENT_OFFLINE
 			return
 		}

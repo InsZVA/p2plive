@@ -9,7 +9,7 @@ func StreamHandler(w http.ResponseWriter, r *http.Request) {
 	Log("info", "stream", r.Method)
 	defer r.Body.Close()
 
-	buff := make([]byte, 4096)
+	buff := make([]byte, 32768)
 	n, err := r.Body.Read(buff)
 	for err == nil {
 		if ForwardLastUpdateTime.Add(FORWARD_UPDATE_INTERVAL*time.Second).Before(time.Now()) &&
