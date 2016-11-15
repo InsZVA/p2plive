@@ -13,7 +13,7 @@ import (
 )
 
 const (
-	MAX_SERVE_CONN_NUM = 1
+	MAX_SERVE_CONN_NUM = 20
 )
 const (
 	CLIENT_INLINE = iota
@@ -62,19 +62,20 @@ func PushHanler() {
 	for err == nil {
 		//TODO optimize to a special write thread
 		//go func() {
-		ClientsMutex.Lock()
-		for _, c := range Clients {
-			if c.Status != CLIENT_INLINE {
-				Log("warning", "stream", "offline")
-				continue
-			}
-			c.Mutex.Lock()
-			c.Conn.WriteMessage(websocket.BinaryMessage, buff[0:n])
-			c.Mutex.Unlock()
-		}
-		ClientsMutex.Unlock()
+		//		ClientsMutex.Lock()
+		//		for _, c := range Clients {
+		//			if c.Status != CLIENT_INLINE {
+		//				//Log("warning", "stream", "offline")
+		//				continue
+		//			}
+		//			c.Mutex.Lock()
+		//			c.Conn.WriteMessage(websocket.BinaryMessage, buff[0:n])
+		//			c.Mutex.Unlock()
+		//		}
+		//		ClientsMutex.Unlock()
 		//}()
 		//Log("info", "stream", "Read "+strconv.Itoa(n)+" size stream")
+		jobs <- buff[0:n]
 		n, _, err = conn.ReadFromUDP(buff)
 	}
 	Log("error", "stream", err)
@@ -133,6 +134,7 @@ func WSHandler(w http.ResponseWriter, r *http.Request) {
 
 func main() {
 	go PushHanler()
+	go AsyncBroadCast()
 
 	pullMux := &http.ServeMux{}
 	pullMux.HandleFunc("/load", LoadHandler)
@@ -142,4 +144,22 @@ func main() {
 		Handler: pullMux,
 	}
 	pullServer.ListenAndServe()
+}
+
+var jobs = make(chan []byte, 100)
+
+func AsyncBroadCast() {
+	for job := range jobs {
+		ClientsMutex.Lock()
+		for _, c := range Clients {
+			if c.Status != CLIENT_INLINE {
+				//Log("warning", "stream", "offline")
+				continue
+			}
+			c.Mutex.Lock()
+			c.Conn.WriteMessage(websocket.BinaryMessage, job)
+			c.Mutex.Unlock()
+		}
+		ClientsMutex.Unlock()
+	}
 }
