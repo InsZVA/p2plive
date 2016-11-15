@@ -86,6 +86,7 @@ func ForwardsUpdate() {
 }
 
 /*
+	Duplicated!
 	ForwardHandler handle the http request about forward server
 	GET: list the push address of forwards to coordinate
 */
@@ -112,6 +113,19 @@ func ForwardHandler(w http.ResponseWriter, r *http.Request) {
 	default:
 		w.WriteHeader(403)
 	}
+}
+
+func GetForwards() []string {
+	ForwardsMutex.Lock()
+	defer ForwardsMutex.Unlock()
+	address := []string{}
+	for _, f := range Forwards {
+		if f.Status != FORWARD_RUNNING {
+			continue
+		}
+		address = append(address, f.PushStreamAddress)
+	}
+	return address
 }
 
 func CollectInfo() {

@@ -14,7 +14,7 @@ func StreamHandler(w http.ResponseWriter, r *http.Request) {
 	for err == nil {
 		if ForwardLastUpdateTime.Add(FORWARD_UPDATE_INTERVAL*time.Second).Before(time.Now()) &&
 			UpdateState == FORWARD_READY {
-			go UpdateForwards()
+			UpdateForwards()
 		}
 
 		for _, f := range Forwards {

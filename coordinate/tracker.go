@@ -24,6 +24,7 @@ type TrackerServer struct {
 	Address       string
 	Status        int
 	LastHeartBeat time.Time
+	Forwards      []string
 	Load          int
 }
 
@@ -32,7 +33,7 @@ var Trackers = make(map[int][]TrackerServer)
 // Region mutex to protect a region servers's read & write
 var RegionMutex = make(map[int]sync.RWMutex)
 
-func AddTracker(name string, region int, address string) {
+func AddTracker(name string, region int, address string, faddress []string) {
 	if trackers, ok := Trackers[region]; !ok || trackers == nil {
 		RegionMutex[region] = sync.RWMutex{}
 		mutex := RegionMutex[region]
@@ -46,6 +47,7 @@ func AddTracker(name string, region int, address string) {
 				Status:        TRACKER_SERVER_RUNNING,
 				LastHeartBeat: time.Now(),
 				Load:          0,
+				Forwards:      faddress,
 			},
 		}
 	} else {
@@ -71,6 +73,7 @@ func AddTracker(name string, region int, address string) {
 				Status:        TRACKER_SERVER_RUNNING,
 				LastHeartBeat: time.Now(),
 				Load:          0,
+				Forwards:      faddress,
 			},
 		)
 		mutex.Unlock()
@@ -81,7 +84,7 @@ func AddTracker(name string, region int, address string) {
 	}
 }
 
-func UpdateTracker(name string, region int, address string, load int, ctime int64) int {
+func UpdateTracker(name string, region int, address string, load int, ctime int64, faddress []string) int {
 	defer func() {
 		if ForwardLastUpdateTime.Add(FORWARD_UPDATE_INTERVAL*time.Second).Before(time.Now()) &&
 			UpdateState == FORWARD_READY {
@@ -102,6 +105,7 @@ func UpdateTracker(name string, region int, address string, load int, ctime int6
 					trackers[i].Status = TRACKER_SERVER_RUNNING
 				}
 				trackers[i].LastHeartBeat = beattime
+				trackers[i].Forwards = faddress
 				return 200
 			}
 		}
@@ -198,7 +202,19 @@ func TrackerHandler(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(403)
 			return
 		}
-		AddTracker(name, int(region), address)
+		forwards, ok := config["forwards"].([]interface{})
+		if !ok {
+			Log("error", "tracker", "forwards config missing")
+			w.WriteHeader(403)
+			return
+		}
+		faddress := []string{}
+		for _, f := range forwards {
+			if s, ok := f.(string); ok {
+				faddress = append(faddress, s)
+			}
+		}
+		AddTracker(name, int(region), address, faddress)
 		w.Write([]byte("ok"))
 	case "GET":
 		region := LookupRegion(r.RemoteAddr)
@@ -275,7 +291,19 @@ func TrackerHandler(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(403)
 			return
 		}
-		w.WriteHeader(UpdateTracker(name, int(region), address, int(load), int64(ctime)))
+		forwards, ok := config["forwards"].([]interface{})
+		if !ok {
+			Log("error", "tracker", "forwards config missing")
+			w.WriteHeader(403)
+			return
+		}
+		faddress := []string{}
+		for _, f := range forwards {
+			if s, ok := f.(string); ok {
+				faddress = append(faddress, s)
+			}
+		}
+		w.WriteHeader(UpdateTracker(name, int(region), address, int(load), int64(ctime), faddress))
 	case "DELETE":
 		defer r.Body.Close()
 		// Read config

@@ -68,6 +68,7 @@ func Register() {
 	reg["name"] = Config.Name
 	reg["address"] = Config.Address
 	reg["region"] = Config.Region
+	reg["forwards"] = GetForwards()
 	reg_json, err := json.Marshal(reg)
 	if err != nil {
 		panic(err)
@@ -86,8 +87,8 @@ func Register() {
 func Timer() {
 	for {
 		startTime := time.Now()
-		HeartBeat()
 		CollectInfo()
+		HeartBeat()
 		pastDuration := time.Now().Sub(startTime)
 		if pastDuration > 60*time.Second {
 			continue
@@ -99,8 +100,8 @@ func Timer() {
 
 func Initialize() {
 	ReadConfig()
-	Register()
 	ForwardsUpdate()
+	Register()
 	go Timer()
 }
 
@@ -111,6 +112,8 @@ func HeartBeat() {
 	reg["region"] = Config.Region
 	reg["load"] = Load
 	reg["ctime"] = time.Now().Unix()
+	reg["forwards"] = GetForwards()
+	go ForwardsUpdate()
 	reg_json, err := json.Marshal(reg)
 	if err != nil {
 		panic(err)
@@ -135,7 +138,7 @@ func HeartBeat() {
 
 func main() {
 	Initialize()
-	http.HandleFunc("/forward", ForwardHandler)
+	//http.HandleFunc("/forward", ForwardHandler)
 	http.HandleFunc("/debug", DebugHandler)
 	http.HandleFunc("/resource", ResourceHandler)
 	http.ListenAndServe(":9090", nil)

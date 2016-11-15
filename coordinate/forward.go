@@ -1,10 +1,7 @@
 package main
 
 import (
-	"encoding/json"
-	"io/ioutil"
 	"net"
-	"net/http"
 	"reflect"
 	"time"
 	"unsafe"
@@ -59,7 +56,7 @@ func UpdateForwards() {
 		mutex := RegionMutex[r]
 		mutex.RLock()
 		for _, t := range trackers {
-			resp, err := http.Get("http://" + t.Address + "/forward")
+			/*resp, err := http.Get("http://" + t.Address + "/forward")
 			if err != nil {
 				Log("error", "forward", err)
 				continue
@@ -75,11 +72,9 @@ func UpdateForwards() {
 			if err != nil {
 				Log("error", "forward", err)
 				continue
-			}
-			for _, f := range forwards {
-				if s, ok := f.(string); ok {
-					InsertFoward(s)
-				}
+			}*/
+			for _, s := range t.Forwards {
+				InsertFoward(s)
 			}
 		}
 		mutex.RUnlock()
