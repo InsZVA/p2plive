@@ -13,7 +13,7 @@ import (
 )
 
 const (
-	MAX_SERVE_CONN_NUM = 20
+	MAX_SERVE_CONN_NUM = 4
 )
 const (
 	CLIENT_INLINE = iota

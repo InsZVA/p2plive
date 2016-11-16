@@ -2,7 +2,7 @@ package main
 
 import (
 	"net/http"
-	"strings"
+	_ "strings"
 	"sync"
 
 	"sync/atomic"
@@ -16,7 +16,7 @@ const (
 	// The number the forward server can service best
 	// If clients number is less than it,
 	// client will pull from forward server directly
-	FORWARD_BEST_SERVICE_NUM = 4
+	FORWARD_BEST_SERVICE_NUM = 1
 
 	USERAGENT_MAX_PUSHNUM = 2
 
@@ -35,7 +35,9 @@ type UserAgent struct {
 	PushNum int
 	// TODO statistics the delay of this user agent
 	Delay []int
-	Conn  *websocket.Conn
+
+	ConnMutex sync.Mutex
+	Conn      *websocket.Conn
 }
 
 var (
@@ -44,8 +46,9 @@ var (
 	WS_CLOSE_ERROR_CODES = []int{000, 1001, 1002, 1003, 1004, 1005, 1006,
 		1007, 1008, 1009, 1010, 1011, 1012, 1013, 1015}
 
-	Clients      = make(map[string]UserAgent)
-	ClientsMutex = sync.Mutex{}
+	Clients              = make(map[string]UserAgent)
+	ClientsMutex         = sync.Mutex{}
+	ClientsNumDirectPull int32
 )
 
 func NewClient(ipaddress string, conn *websocket.Conn) {
@@ -68,6 +71,9 @@ func RemoveClient(ipaddress string) {
 	defer ClientsMutex.Unlock()
 	if c, ok := Clients[ipaddress]; ok {
 		c.Status = USERAGENT_AWAY
+		if c.PullNum == 1 {
+			atomic.AddInt32(&ClientsNumDirectPull, -1)
+		}
 		delete(Clients, ipaddress)
 	}
 	Log("info", "resource", "client:"+ipaddress+" has been removed.")
@@ -80,13 +86,16 @@ func RemoveClient(ipaddress string) {
 func PeekSourceClient() string {
 	ClientsMutex.Lock()
 	defer ClientsMutex.Unlock()
-	if len(Clients) < FORWARD_BEST_SERVICE_NUM*ForwardsAvaliable {
+	if int(atomic.LoadInt32(&ClientsNumDirectPull)) < FORWARD_BEST_SERVICE_NUM*ForwardsAvaliable {
 		return ""
 	}
 	count := 0
 	best := ""
 	for ipaddress, client := range Clients {
 		if client.PushNum >= USERAGENT_MAX_PUSHNUM {
+			continue
+		}
+		if client.PullNum == 0 {
 			continue
 		}
 		if best == "" || client.ForwardTimes < Clients[best].ForwardTimes {
@@ -114,7 +123,21 @@ func PeekSourceServer() string {
 }
 
 func MakePeerConnection(pullerIpAddress string, pusherIpAddress string) {
-	// TODO Implement this
+	msg := make(map[string]interface{})
+	msg["type"] = "push"
+	msg["address"] = pullerIpAddress
+	if c, ok := Clients[pusherIpAddress]; ok {
+		c.ConnMutex.Lock()
+		c.Conn.WriteJSON(msg)
+		c.ConnMutex.Unlock()
+	}
+	msg["type"] = "pull"
+	msg["address"] = pusherIpAddress
+	if c, ok := Clients[pullerIpAddress]; ok {
+		c.ConnMutex.Lock()
+		c.Conn.WriteJSON(msg)
+		c.ConnMutex.Unlock()
+	}
 }
 
 func ResourceHandler(w http.ResponseWriter, r *http.Request) {
@@ -138,7 +161,8 @@ func ResourceHandler(w http.ResponseWriter, r *http.Request) {
 		Log("error", "resource", err)
 		return
 	}
-	ipaddress := strings.Split(r.RemoteAddr, ":")[0]
+	//ipaddress := strings.Split(r.RemoteAddr, ":")[0]
+	ipaddress := r.RemoteAddr
 	NewClient(ipaddress, conn)
 	defer func() {
 		conn.Close()
@@ -175,7 +199,10 @@ func ResourceHandler(w http.ResponseWriter, r *http.Request) {
 					resp := make(map[string]interface{})
 					resp["type"] = "directPull"
 					resp["address"] = PeekSourceServer()
-					conn.WriteJSON(resp)
+					atomic.AddInt32(&ClientsNumDirectPull, 1)
+					c.ConnMutex.Lock()
+					c.Conn.WriteJSON(resp)
+					c.ConnMutex.Unlock()
 				} else {
 					MakePeerConnection(ipaddress, pusherIpAddress)
 				}
@@ -190,6 +217,19 @@ func ResourceHandler(w http.ResponseWriter, r *http.Request) {
 				c := Clients[ipaddress]
 				c.PushNum = int(pushNum)
 				Clients[ipaddress] = c
+			}
+		case "candidate": //WebRTC signal forward directly
+			fallthrough
+		case "offer":
+			fallthrough
+		case "answer":
+			if address, ok := msg["address"].(string); ok {
+				if c, ok := Clients[address]; ok {
+					c.ConnMutex.Lock()
+					msg["type"] = msg["method"]
+					c.Conn.WriteJSON(msg)
+					c.ConnMutex.Unlock()
+				}
 			}
 		}
 	}
