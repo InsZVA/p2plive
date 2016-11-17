@@ -13,6 +13,9 @@
 //
 // Inspired by "MPEG Decoder in Java ME" by Nokia:
 // http://www.developer.nokia.com/Community/Wiki/MPEG_decoder_in_Java_ME
+//
+// InsZVA: I change a little code to make it support both WebSocket and RTCDataChannel
+
 
 
 var requestAnimFrame = (function(){
@@ -51,7 +54,7 @@ var jsmpeg = window.jsmpeg = function( url, opts ) {
 		this.renderFrame = this.renderFrame2D;
 	}
 
-	if( url instanceof WebSocket ) {
+	if( url instanceof WebSocket || (url && url.toString() == "[object RTCDataChannel]" && url instanceof EventTarget)) {
 		this.client = url;
 		this.client.onopen = this.initSocketClient.bind(this);
 	}

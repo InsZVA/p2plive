@@ -41,8 +41,6 @@ $.get("http://127.0.0.1:8080/tracker", function(data) {
                 client.pullNum = 1;
                 // Setup the WebSocket connection and start the player
                 var wsclient = new WebSocket( 'ws://127.0.0.1:9998/' );
-
-
                 player = new decoder(wsclient, {canvas:canvas});
                 break;
             case "push":
@@ -53,29 +51,33 @@ $.get("http://127.0.0.1:8080/tracker", function(data) {
                 }
                 pc = new PeerConnection({"iceServers": []});
                 pc.onicecandidate = function(event){
-                    console.log("puller:", address);
                     trackerWS.send(JSON.stringify({
                         "method": "candidate",
                         "candidate": event.candidate,
                         "address": address
                     }));
                 };
-                var getUserMedia = (navigator.getUserMedia ||
-                navigator.webkitGetUserMedia ||
-                navigator.mozGetUserMedia ||
-                navigator.msGetUserMedia);
-                getUserMedia.call(navigator, {
-                    "audio": true,
-                    "video": true
-                }, function(stream) {
-                    if (pc.addTrack) {
-                        stream.getTracks().forEach(function (track) {
-                            pc.addTrack(track, stream);
-                        });
-                    } else {
-                        pc.addStream(stream);
-                    }
-                }, function(error) {});
+
+                var dc = pc.createDataChannel("live stream", {
+                    ordered:true,
+                    maxRetransmitTime: 3000
+                });
+
+                dc.onmessage = function (event) {
+                    console.log("received: " + event.data);
+                };
+
+                dc.onopen = function () {
+                    console.log("datachannel open");
+                    dc.send("123");
+                    player.addForwardDC(this);
+                };
+
+                dc.onclose = function () {
+                    console.log("datachannel close");
+                };
+                console.log(dc);
+
                 pc.createOffer().then(function(offer) {
                     return pc.setLocalDescription(offer);
                 }).then(function() {
@@ -85,14 +87,15 @@ $.get("http://127.0.0.1:8080/tracker", function(data) {
                         "address": address
                     }));
                 });
-                pc.onstream = function(stream) {console.log(stream)}
+
                 for (var i = 0;i < MAX_PUSH_NUM;i++)
                     if (client.pushs[i] == undefined || client.pushs[i].state == "close") {
                         client.pushs[i] = {
                             pc: pc,
                             state: "starting",
-                            remote: address
-                        }
+                            remote: address,
+                            dc: dc
+                        };
                         break;
                     }
                 break;
@@ -100,7 +103,6 @@ $.get("http://127.0.0.1:8080/tracker", function(data) {
                 pc = new PeerConnection({"iceServers": []});
                 var address = msg.address;
                 pc.onicecandidate = function(event){
-                    console.log("puller:", address);
                     trackerWS.send(JSON.stringify({
                         "method": "candidate",
                         "candidate": event.candidate,
@@ -116,7 +118,7 @@ $.get("http://127.0.0.1:8080/tracker", function(data) {
                         };
                         break;
                     }
-                pc.onstream = function(stream) {console.log(stream)};
+
                 break;
             case "candidate":
                 for (var i = 0;i < MAX_PULL_NUM;i++)
@@ -154,13 +156,14 @@ $.get("http://127.0.0.1:8080/tracker", function(data) {
                 client.pullNum++;
                 pc.ondatachannel = function(ev) {
                     console.log('Data channel is created!');
-                    pull.dc = ev.channel;
+                    player = new decoder(ev.channel, {canvas:canvas});
+                    pull.dc = ev.channel;/*
                     ev.channel.onopen = function() {
                         console.log('Data channel is open and ready to be used.');
                     };
                     ev.channel.onmessage = function(event) {
                         console.log("received: " + event.data);
-                    }
+                    }*/
                 };
                 break;
             case "answer":
@@ -173,20 +176,7 @@ $.get("http://127.0.0.1:8080/tracker", function(data) {
                     }
                 pc.setRemoteDescription(new RTCSessionDescription(msg.sdp));
                 client.pushNum++;
-                var dc = pc.createDataChannel("live stream");
-                push.dc = dc;
-                dc.onmessage = function (event) {
-                    console.log("received: " + event.data);
-                };
 
-                dc.onopen = function () {
-                    console.log("datachannel open");
-                    dc.send("123");
-                };
-
-                dc.onclose = function () {
-                    console.log("datachannel close");
-                };
         }
     };
 
