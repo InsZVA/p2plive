@@ -21,7 +21,7 @@ var client = {
 };
 var getSourceTimer, updateTimer;
 
-var canvas, player;
+var canvas, player, directwsclient;
 canvas = document.getElementById('videoCanvas');
 var ctx=canvas.getContext('2d');
 ctx.fillStyle='#FF0000';
@@ -40,8 +40,8 @@ $.get("http://127.0.0.1:8080/tracker", function(data) {
                 forwardAddress = msg.address;
                 client.pullNum = 1;
                 // Setup the WebSocket connection and start the player
-                var wsclient = new WebSocket( 'ws://127.0.0.1:9998/' );
-                player = new decoder(wsclient, {canvas:canvas});
+                directwsclient = new WebSocket( 'ws://127.0.0.1:9998/' );
+                player = new decoder(directwsclient, {canvas:canvas});
                 break;
             case "push":
                 var address = msg.address;
@@ -157,13 +157,12 @@ $.get("http://127.0.0.1:8080/tracker", function(data) {
                 pc.ondatachannel = function(ev) {
                     console.log('Data channel is created!');
                     player = new decoder(ev.channel, {canvas:canvas});
-                    pull.dc = ev.channel;/*
-                    ev.channel.onopen = function() {
-                        console.log('Data channel is open and ready to be used.');
-                    };
-                    ev.channel.onmessage = function(event) {
-                        console.log("received: " + event.data);
-                    }*/
+                    pull.dc = ev.channel;
+                    pull.state = "transferring";
+
+                    if (client.pullNum < MAX_PULL_NUM && directwsclient == undefined) {
+                        trackerWS.send(JSON.stringify({method: "getSource"}));
+                    }
                 };
                 break;
             case "answer":
@@ -176,7 +175,6 @@ $.get("http://127.0.0.1:8080/tracker", function(data) {
                     }
                 pc.setRemoteDescription(new RTCSessionDescription(msg.sdp));
                 client.pushNum++;
-
         }
     };
 

@@ -2,6 +2,7 @@ package main
 
 import (
 	"net/http"
+	"strconv"
 	_ "strings"
 	"sync"
 
@@ -71,7 +72,7 @@ func RemoveClient(ipaddress string) {
 	defer ClientsMutex.Unlock()
 	if c, ok := Clients[ipaddress]; ok {
 		c.Status = USERAGENT_AWAY
-		if c.PullNum == 1 {
+		if c.ForwardTimes == 1 {
 			atomic.AddInt32(&ClientsNumDirectPull, -1)
 		}
 		delete(Clients, ipaddress)
@@ -87,6 +88,8 @@ func PeekSourceClient() string {
 	ClientsMutex.Lock()
 	defer ClientsMutex.Unlock()
 	if int(atomic.LoadInt32(&ClientsNumDirectPull)) < FORWARD_BEST_SERVICE_NUM*ForwardsAvaliable {
+		Log("info", "sourcepeeker", "DirectClient:"+strconv.Itoa(int(atomic.LoadInt32(&ClientsNumDirectPull)))+
+			" ForwardAvaildable:"+strconv.Itoa(ForwardsAvaliable)+" so make a direct pull")
 		return ""
 	}
 	count := 0
@@ -123,12 +126,15 @@ func PeekSourceServer() string {
 }
 
 func MakePeerConnection(pullerIpAddress string, pusherIpAddress string) {
+	ClientsMutex.Lock()
 	msg := make(map[string]interface{})
 	msg["type"] = "push"
 	msg["address"] = pullerIpAddress
+	pusherForwardTimes := 1
 	if c, ok := Clients[pusherIpAddress]; ok {
 		c.ConnMutex.Lock()
 		c.Conn.WriteJSON(msg)
+		pusherForwardTimes = c.ForwardTimes
 		c.ConnMutex.Unlock()
 	}
 	msg["type"] = "pull"
@@ -136,8 +142,10 @@ func MakePeerConnection(pullerIpAddress string, pusherIpAddress string) {
 	if c, ok := Clients[pullerIpAddress]; ok {
 		c.ConnMutex.Lock()
 		c.Conn.WriteJSON(msg)
+		c.ForwardTimes = pusherForwardTimes + 1
 		c.ConnMutex.Unlock()
 	}
+	ClientsMutex.Unlock()
 }
 
 func ResourceHandler(w http.ResponseWriter, r *http.Request) {
@@ -187,7 +195,7 @@ func ResourceHandler(w http.ResponseWriter, r *http.Request) {
 
 		switch method {
 		case "getSource":
-			if Clients[ipaddress].PullNum < 2 {
+			if Clients[ipaddress].PullNum < 2 && Clients[ipaddress].ForwardTimes != 1 {
 				pusherIpAddress := PeekSourceClient()
 				if pusherIpAddress == "" {
 					//forwardAddress := PeekSourceServer()
