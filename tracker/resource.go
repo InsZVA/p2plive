@@ -19,7 +19,7 @@ const (
 	// client will pull from forward server directly
 	FORWARD_BEST_SERVICE_NUM = 1
 
-	USERAGENT_MAX_PUSHNUM = 2
+	USERAGENT_MAX_PUSHNUM = 3
 
 	USERAGENT_READY = iota
 	USERAGENT_AWAY

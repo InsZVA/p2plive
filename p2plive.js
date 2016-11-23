@@ -6,7 +6,7 @@ window.webkitPeerConnection00 ||
 window.webkitRTCPeerConnection ||
 window.mozRTCPeerConnection);
 
-const RETRY_GETSOURCE_INTERVAL = 500,
+const
     UPDATE_INTERVAL = 10000,
     MAX_PUSH_NUM = 3,
     MAX_PULL_NUM = 2;
@@ -17,38 +17,308 @@ var client = {
     pullNum: 0,	//the number of clients this client pull from
     pushNum: 0, //the number of clients this client push to
     pulls: [],
-    pushs: []
+    pushs: [],
+    forwardTimes: 0
 };
 var getSourceTimer, updateTimer;
 
 var canvas, player, directwsclient;
 canvas = document.getElementById('videoCanvas');
-var ctx=canvas.getContext('2d');
-ctx.fillStyle='#FF0000';
-ctx.fillRect(0,0,80,100);
+
+var selector = {
+    pullState: 'close',
+    pushState: 'close',
+    cacheTime: 1000,
+    interval: 100,
+    onmessage: null,
+    onopen: null,
+    onerror: null,
+    onclose: null,
+    maxCachedPackets: 32,  // to avoid the cache too large(when chrome doesn't render)
+    open: function() {
+        setInterval(this.playTimer, this.interval);
+        //setInterval(this.forwardTimer, this.interval);
+        this.onopen();
+    },
+    playTimer: function() {
+
+        // Find better pull source & get earliest create time packet
+        var minCreateTime = 999999999;
+        var preferId = -1;
+        for (var i = 0; i < client.pulls.length; i++) {
+            var cache = client.pulls[i].cache;
+            if (cache == undefined) continue;
+            if (cache[0] && cache[0].createTime < minCreateTime) minCreateTime = cache[0].createTime;
+            if (cache[0] && (preferId == -1 || [0].forwardTimes < client.pulls[preferId].cache[0].forwardTimes))
+                preferId = i;
+        }
+        if (preferId == -1) return;
+
+        //Forward
+        for (var i = 0; i < client.pulls[preferId].cache.length; i++) {
+            if (client.pulls[preferId].cache[i].sent == undefined) {
+                for (var j = 0; j < client.pushs.length; j++) {
+                    if (client.pushs[j].dc && client.pushs[j].dc.readyState == "open") {
+                        var messageData = new Uint8Array(client.pulls[preferId].cache[i].event.data);
+                        messageData[6] = messageData[6]+1;
+                        client.pushs[j].dc.send(messageData);
+                    }
+                    client.pulls[preferId].cache[i].sent = true;
+                }
+            }
+        }
+
+        var overtime = minCreateTime + selector.cacheTime;
+
+
+
+        // Play those packets that over cache time
+        for (var i = client.pulls[preferId].cache.length > selector.maxCachedPackets ?
+                client.pulls[preferId].cache.length - selector.maxCachedPackets : 0;
+             i < client.pulls[preferId].cache.length; i++) {
+            if (client.pulls[preferId].cache[i].createTime < overtime) {
+                var messageData = new Uint8Array(client.pulls[preferId].cache[i].event.data);
+                client.pulls[preferId].cache[i].event.data = messageData.slice(11);
+                selector.onmessage(client.pulls[preferId].cache[i].event);
+            } else {
+                break;
+            }
+        }
+
+        // Clean packets in all pull sources' cache that over time
+        for (var i = 0;i < client.pulls.length;i++) {
+            for (var j = 0; j < client.pulls[i].cache.length; j++) {
+                if (client.pulls[i].cache[i] && client.pulls[i].cache[i].createTime > overtime)
+                    break;
+            }
+            client.pulls[i].cache = client.pulls[i].cache.slice(j);
+        }
+
+    },
+    forwardTimer: function() {
+
+        // Find better pull source
+        var preferId = -1;
+        for (var i = 0; i < client.pulls.length; i++) {
+            var cache = client.pulls[i].cache;
+            if (cache == undefined) continue;
+            if (cache[0] && (preferId == -1 || [0].forwardTimes < client.pulls[preferId].cache[0].forwardTimes))
+                preferId = i;
+        }
+
+        // Forward packet & mark it to avoid twice forward
+        // These packet in cache will be cleaned in play timer finally
+        if (preferId == -1) return;
+        for (var i = 0; i < client.pulls[preferId].cache.length; i++) {
+            if (client.pulls[preferId].cache[i].sent == undefined) {
+                for (var i = 0; i < client.pushs.length; i++) {
+                    if (client.pushs[i].dc && client.pushs[i].dc.readyState == "open") {
+                        var messageData = new Uint8Array(client.pulls[preferId].cache[i].event.data);
+                        messageData[6] = messageData[6]+1;
+                        client.pushs[i].dc.send(messageData);
+                    }
+                    client.pulls[preferId].cache[i].sent = true;
+                }
+            }
+        }
+    },
+    refreshAvailablePuller: function() {
+        var availablePullSource = 0;
+
+        // Clear the closed pull source
+        var pulls = [];
+        for (var i = 0;i < client.pulls.length;i++) {
+            if (!client.pulls[i].dc || client.pulls[i].dc.readyState == "closing" || client.pulls[i].dc.readyState == "closed")
+                if (selector.pullState != "connecting" || !client.pulls[i].pc)
+                    continue;
+            if (client.pulls[i].dc && client.pulls[i].dc.readyState == "open")
+                availablePullSource++;
+            pulls.push(client.pulls[i]);
+        }
+        client.pulls = pulls;
+
+        return availablePullSource;
+    },
+    refreshPushingTarget: function() {
+        var pushingTarget = 0;
+
+        // Clear the closed push target
+        var pushs = [];
+        for (var i = 0;i < client.pushs.length;i++) {
+            if (!client.pushs[i].dc || client.pushs[i].dc.readyState == "closing" || client.pushs[i].dc.readyState == "closed")
+                if (selector.pushState != "connecting" || !client.pushs[i].pc)
+                    continue;
+            if (client.pushs[i].dc && client.pushs[i].dc.readyState == "open")
+                pushingTarget++;
+            pushs.push(client.pushs[i]);
+        }
+        client.pushs = pushs;
+
+        return pushingTarget;
+    },
+    getPulling: function() {
+        return client.pulls[client.pulls.length - 1]
+    },
+    getPushing: function() {
+        return client.pushs[client.pushs.length - 1];
+    },
+    refresh: function(newState, newSocket, external) {
+        switch (newState) {
+            case 'pulling':
+                if (selector.pushState == "connecting") {
+                    // Avoid this case
+                }
+                var availablePullSource = selector.refreshAvailablePuller();
+                if (newSocket instanceof PeerConnection) {
+                    if (selector.pullState == "direct") {
+                        console.log("already has direct pull source!");
+                        newSocket.close();
+                        return;
+                    }
+                    if (availablePullSource >= MAX_PULL_NUM) {
+                        console.log("already has enough pull source!");
+                        newSocket.close();
+                        return;
+                    }
+                    if (selector.pullState == "connecting") {
+                        console.log("only process a socket in one time");
+                        newSocket.close();
+                        return;
+                    }
+                    client.pulls.push({
+                        pc: newSocket,
+                        remote: external
+                    });
+                } else {
+                    console.error("assert type PeerConnection");
+                }
+                selector.pullState = "connecting";
+                client.pullNum = availablePullSource + 1;
+                break;
+            case "pushing":
+                var pushingTarget = selector.refreshPushingTarget();
+                if (newSocket instanceof PeerConnection) {
+                    if (selector.pullState == "connecting") {
+                        newSocket.close();
+                        client.pushNum = pushingTarget;
+                        return;
+                    }
+                    if (pushingTarget >= MAX_PULL_NUM) {
+                        console.log("already push many targets!");
+                        newSocket.close();
+                    }
+                    client.pushs.push({
+                        pc: newSocket,
+                        remote: external
+                    });
+                } else {
+                    console.error("assert type PeerConnection");
+                }
+                selector.pushState = "connecting";
+                client.pushNum = pushingTarget + 1;
+                break;
+            case 'pull':
+                if (selector.pullState == 'connecting') {
+                    var availablePullSource = selector.refreshAvailablePuller();
+                    var pull = selector.getPulling();
+                    newSocket.onopen = function () {
+                        console.log("Datachannel open");
+                        pull.cache = [];
+                        newSocket.binaryType = 'arraybuffer';
+                        newSocket.onmessage = function (event) {
+                            var messageData = new Uint8Array(event.data);
+                            var cache = {};
+                            cache.forwardTimes = messageData[6];
+                            cache.createTime = messageData[7] + messageData[8] * 256 + messageData[9] * 256*256 +
+                                messageData[10] * 256*256;
+                            cache.event = event;
+                            //if (pull.cache.length < selector.maxCachedPackets)
+                                pull.cache.push(cache);
+                        };
+                        newSocket.onclose = function() {
+                            trackerWS.send(JSON.stringify({method: "getSource"}));
+                        };
+                    };
+                    client.pullNum = availablePullSource + 1;
+                    //selector.pullState = "pull";
+                    //For debug eaily 1to1
+                } else {
+                    console.log("only process a pull at one time");
+                    newSocket.close();
+                }
+                break;
+            case 'push':
+                if (selector.pushState == "connecting") {
+                    var pushingTarget = selector.refreshPushingTarget();
+                    var push = selector.getPushing();
+                    console.log(client);
+                    push.dc = newSocket;
+                    client.pushNum = pushingTarget + 1;
+                }
+
+                break;
+            case "directPull":
+                for (var i = 0; i < client.pulls.length; i++) {
+                    if (client.pulls[i].ws) {
+                        if (client.pulls[i].ws.readyState == 1/*OPEN*/) {
+                            console.error("You are already pull from a forward server");
+                            return;
+                        }
+                        client.pulls[i].ws.close();
+                    }
+                    if (client.pulls[i].dc) {
+                        client.pulls[i].close();
+                    }
+                }
+                client.pulls = [];
+                client.pulls.push({
+                    ws: newSocket,
+                    cache: []
+                });
+                var pull = client.pulls[0];
+                newSocket.onopen = function() {
+                    newSocket.binaryType = 'arraybuffer';
+                    newSocket.onmessage = function(event) {
+                        var messageData = new Uint8Array(event.data);
+                        var cache = {};
+                        cache.forwardTimes = messageData[6];
+                        cache.createTime = messageData[7] + messageData[8] * 256 + messageData[9] * 256*256 +
+                            messageData[10] * 256*256;
+                        cache.event = event;
+                        //if (pull.cache.length < selector.maxCachedPackets)
+                            pull.cache.push(cache);
+                    };
+                    newSocket.onclose = function() {
+                        trackerWS.send(JSON.stringify({method: "getSource"}));
+                    };
+                };
+                client.pullNum = 1;
+                this.pullState = "directPull";
+        }
+    }
+};
+
+player = new decoder(selector, {canvas:canvas});
+selector.open();
 
 $.get("http://127.0.0.1:8080/tracker", function(data) {
     trackerAddress = data;
-    console.log("选择" + trackerAddress + "作为Tracker服务器\n");
+    console.log("select" + trackerAddress + "as a tracker server\n");
     trackerWS = new WebSocket( 'ws://' + trackerAddress + "/resource");
     trackerWS.onmessage = function(event) {
         msg = JSON.parse(event.data);
         var pc;
         switch (msg.type) {
             case "directPull":
-                clearInterval(getSourceTimer);
                 forwardAddress = msg.address;
-                client.pullNum = 1;
+                //client.pullNum = 1;
                 // Setup the WebSocket connection and start the player
                 directwsclient = new WebSocket( 'ws://127.0.0.1:9998/' );
-                player = new decoder(directwsclient, {canvas:canvas});
+                //player = new decoder(directwsclient, {canvas:canvas});
+                selector.refresh("directPull", directwsclient);
                 break;
             case "push":
                 var address = msg.address;
-                if (client.pushs.length > 3) {
-                    console.log("推流超过" + MAX_PUSH_NUM);
-                    return;
-                }
                 pc = new PeerConnection({"iceServers": []});
                 pc.onicecandidate = function(event){
                     trackerWS.send(JSON.stringify({
@@ -69,14 +339,12 @@ $.get("http://127.0.0.1:8080/tracker", function(data) {
 
                 dc.onopen = function () {
                     console.log("datachannel open");
-                    dc.send("123");
-                    player.addForwardDC(this);
+                    selector.refresh('push', this);
                 };
 
                 dc.onclose = function () {
                     console.log("datachannel close");
                 };
-                console.log(dc);
 
                 pc.createOffer().then(function(offer) {
                     return pc.setLocalDescription(offer);
@@ -88,18 +356,9 @@ $.get("http://127.0.0.1:8080/tracker", function(data) {
                     }));
                 });
 
-                for (var i = 0;i < MAX_PUSH_NUM;i++)
-                    if (client.pushs[i] == undefined || client.pushs[i].state == "close") {
-                        client.pushs[i] = {
-                            pc: pc,
-                            state: "starting",
-                            remote: address,
-                            dc: dc
-                        };
-                        break;
-                    }
+                selector.refresh("pushing", pc, address);
                 break;
-            case "pull":
+            case "pull":    // New Version complete
                 pc = new PeerConnection({"iceServers": []});
                 var address = msg.address;
                 pc.onicecandidate = function(event){
@@ -109,72 +368,63 @@ $.get("http://127.0.0.1:8080/tracker", function(data) {
                         "address": address
                     }));
                 };
-                for (var i = 0;i < MAX_PULL_NUM;i++)
-                    if (client.pulls[i] == undefined || client.pulls[i].state == "close") {
-                        client.pulls[i] = {
-                            pc: pc,
-                            state: "starting",
-                            remote: address
-                        };
-                        break;
-                    }
+                pc.onclose = function() {
+                    selector.pullState = "close";
+                    if (selector.pullState == "direct")
+                        return;
 
-                break;
-            case "candidate":
-                for (var i = 0;i < MAX_PULL_NUM;i++)
-                    if (client.pulls[i] && client.pulls[i].state == "starting") {
-                        pc = client.pulls[i].pc;
-                        break;
-                    }
-                for (var i = 0;i < MAX_PUSH_NUM;i++)
-                    if (client.pushs[i] && client.pushs[i].state == "starting") {
-                        pc = client.pushs[i].pc;
-                        break;
-                    }
-                    if (msg.candidate != null)
-                        pc.addIceCandidate(new RTCIceCandidate(msg.candidate));
-                break;
-            case "offer":
-                var address, pull;
-                for (var i = 0;i < MAX_PULL_NUM;i++)
-                    if (client.pulls[i] && client.pulls[i].state == "starting") {
-                        pull = client.pulls[i];
-                        pc = client.pulls[i].pc;
-                        address = client.pulls[i].remote;
-                        break;
-                    }
-                pc.setRemoteDescription(new RTCSessionDescription(msg.sdp));
-                pc.createAnswer().then(function(answer) {
-                    return pc.setLocalDescription(answer);
-                }).then(function() {
-                    trackerWS.send(JSON.stringify({
-                        "method": "answer",
-                        "sdp": pc.localDescription,
-                        "address": address
-                    }));
-                });
-                client.pullNum++;
-                pc.ondatachannel = function(ev) {
-                    console.log('Data channel is created!');
-                    player = new decoder(ev.channel, {canvas:canvas});
-                    pull.dc = ev.channel;
-                    pull.state = "transferring";
-
-                    if (client.pullNum < MAX_PULL_NUM && directwsclient == undefined) {
+                    var availablePullSource = selector.refreshAvailablePuller();
+                    if (availablePullSource < MAX_PULL_NUM) {
                         trackerWS.send(JSON.stringify({method: "getSource"}));
                     }
                 };
+                selector.refresh('pulling', pc, address);
+                break;
+            case "candidate":
+                var p;
+                if (selector.pushState == "connecting")
+                    p = selector.getPushing();
+                else
+                    p = selector.getPulling();
+                if (msg.candidate != null) {
+                    p.pc.addIceCandidate(new RTCIceCandidate(msg.candidate));
+                }
+                break;
+            case "offer":
+                var address, pull;
+                if (selector.pullState == "connecting") {
+                    pull = selector.getPulling();
+                    pc = pull.pc;
+
+                    pc.setRemoteDescription(new RTCSessionDescription(msg.sdp));
+                    pc.createAnswer().then(function(answer) {
+                        return pc.setLocalDescription(answer);
+                    }).then(function() {
+                        trackerWS.send(JSON.stringify({
+                            "method": "answer",
+                            "sdp": pc.localDescription,
+                            "address": pull.remote
+                        }));
+                    });
+
+                    pc.ondatachannel = function(ev) {
+                        console.log('Data channel is created!');
+                        pull.dc = ev.channel;
+                        selector.refresh("pull", pull.dc);
+                        //trackerWS.send(JSON.stringify({method: "getSource"}));
+                    };
+                } else {
+                    // TODO
+                }
+
                 break;
             case "answer":
-                var push;
-                for (var i = 0;i < MAX_PUSH_NUM;i++)
-                    if (client.pushs[i] && client.pushs[i].state == "starting") {
-                        push = client.pushs[i];
-                        pc = client.pushs[i].pc;
-                        break;
-                    }
-                pc.setRemoteDescription(new RTCSessionDescription(msg.sdp));
-                client.pushNum++;
+                if (selector.pushState == "connecting") {
+                    var push = selector.getPushing();
+                    push.pc.setRemoteDescription(new RTCSessionDescription(msg.sdp));
+                } else {
+                    //TODO
+                }
         }
     };
 
@@ -191,3 +441,9 @@ $.get("http://127.0.0.1:8080/tracker", function(data) {
         updateTimer = setInterval(update, UPDATE_INTERVAL);
     }
 });
+
+//TODO List
+// 互相建立的DataChannel其实收不到数据 -- solve
+// chrome如果不渲染，cache里面会积累大量数据，然后导致线程卡死 -- solve
+// 第3个客户端连入的情况
+// 解码器速度堪忧 考虑换其他解码器

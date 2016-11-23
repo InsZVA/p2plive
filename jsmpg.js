@@ -16,7 +16,9 @@
 //
 // InsZVA: I change a little code to make it support both WebSocket and RTCDataChannel
 
-
+var implementSocketInterface = function(s) {
+	return s;
+};
 
 var requestAnimFrame = (function(){
 	return window.requestAnimationFrame ||
@@ -54,7 +56,7 @@ var jsmpeg = window.jsmpeg = function( url, opts ) {
 		this.renderFrame = this.renderFrame2D;
 	}
 
-	if( url instanceof WebSocket || (url && url.toString() == "[object RTCDataChannel]" && url instanceof EventTarget)) {
+	if( implementSocketInterface(url) ) {
 		this.client = url;
 		this.client.onopen = this.initSocketClient.bind(this);
 	}
@@ -1529,6 +1531,8 @@ jsmpeg.prototype.decodeBlock = function(block) {
 	// Decode AC coefficients (+DC for non-intra)
 	var level = 0;
 	while( true ) {
+		if (n > ZIG_ZAG.length) break;
+
 		var
 			run = 0,
 			coeff = this.readCode(DCT_COEFF);

@@ -1,4 +1,4 @@
 start .\forward\forward
 start .\coordinate\coordinate
-
-pause
+cd .\tracker
+start tracker
