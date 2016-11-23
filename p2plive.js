@@ -34,27 +34,82 @@ var selector = {
     onopen: null,
     onerror: null,
     onclose: null,
+    pcTimeout: 1000,
     maxCachedPackets: 32,  // to avoid the cache too large(when chrome doesn't render)
     open: function() {
         setInterval(this.playTimer, this.interval);
         //setInterval(this.forwardTimer, this.interval);
+        //setInterval(this.whoisyourdaddyCHROME, 1000);
         this.onopen();
+    },
+    whoisyourdaddyCHROME: function() {
+        // chrome你他妈！RTCPeerconnection被对方关闭不会onclose，而且，如果在没来得及发送ice的时候被关闭
+        // 将会毫无知觉的变成一个new？？？exo？
+        var pulls = [];
+        for (var i = 0; i < client.pulls.length; i++) {
+            if (!client.pulls[i].cache && client.pulls[i].pc &&
+                (client.pulls[i].pc.iceConnectionState == "new" && new Date().getTime() - client.pulls[i].startTime > selector.pcTimeout
+                || client.pulls[i].pc.iceConnectionState == "closed")) {
+                client.pulls[i].pc.close();
+                if (availablePullSource < MAX_PULL_NUM)
+                    setTimeout(function() {
+                        trackerWS.send(JSON.stringify({method: "getSource"}));
+                    }, 500);
+            } else {
+                pulls.push(client.pulls[i]);
+            }
+        }
+        client.pulls = pulls;
+
+        selector.refreshPushingTarget();
+        var availablePullSource = selector.refreshAvailablePuller();
+
     },
     playTimer: function() {
 
         // Find better pull source & get earliest create time packet
         var minCreateTime = 999999999;
         var preferId = -1;
+        var kills = [];
         for (var i = 0; i < client.pulls.length; i++) {
             var cache = client.pulls[i].cache;
-            if (cache == undefined) continue;
+            if (cache == undefined) {
+                if (client.pulls[i].startTime && new Date().getTime() - client.pulls[i].startTime > selector.pcTimeout) {
+                    kills.push(i);
+                    console.log("kill" + i);
+                }
+                continue;
+            }
             if (cache[0] && cache[0].createTime < minCreateTime) minCreateTime = cache[0].createTime;
             if (cache[0] && (preferId == -1 || [0].forwardTimes < client.pulls[preferId].cache[0].forwardTimes))
                 preferId = i;
         }
+
+        // Kill those peerconnections created when pusher reject
+        if (kills.length != 0) {
+            console.log(kills);
+            var pulls = [];
+            var k = 0;
+            for (var i = 0; i < client.pulls.length && k < kills.length; i++) {
+                if (i == kills[k]) {
+                    if (preferId > i) {
+                        preferId--;
+                    }
+                    client.pulls[i].pc.close();
+                    k++;
+                    continue;
+                }
+                pulls.push(client.pulls[i]);
+            }
+            client.pulls = pulls;
+            selector.pullState = "close";
+            trackerWS.send(JSON.stringify({method: "getSource"}));
+        }
+
         if (preferId == -1) return;
 
         //Forward
+
         for (var i = 0; i < client.pulls[preferId].cache.length; i++) {
             if (client.pulls[preferId].cache[i].sent == undefined) {
                 for (var j = 0; j < client.pushs.length; j++) {
@@ -69,8 +124,6 @@ var selector = {
         }
 
         var overtime = minCreateTime + selector.cacheTime;
-
-
 
         // Play those packets that over cache time
         for (var i = client.pulls[preferId].cache.length > selector.maxCachedPackets ?
@@ -111,11 +164,11 @@ var selector = {
         if (preferId == -1) return;
         for (var i = 0; i < client.pulls[preferId].cache.length; i++) {
             if (client.pulls[preferId].cache[i].sent == undefined) {
-                for (var i = 0; i < client.pushs.length; i++) {
-                    if (client.pushs[i].dc && client.pushs[i].dc.readyState == "open") {
+                for (var j = 0; j < client.pushs.length; j++) {
+                    if (client.pushs[j].dc && client.pushs[j].dc.readyState == "open") {
                         var messageData = new Uint8Array(client.pulls[preferId].cache[i].event.data);
                         messageData[6] = messageData[6]+1;
-                        client.pushs[i].dc.send(messageData);
+                        client.pushs[j].dc.send(messageData);
                     }
                     client.pulls[preferId].cache[i].sent = true;
                 }
@@ -128,6 +181,14 @@ var selector = {
         // Clear the closed pull source
         var pulls = [];
         for (var i = 0;i < client.pulls.length;i++) {
+            if (client.pulls[i].pc && (client.pulls[i].pc.iceConnectionState == "disconnected" ||
+                client.pulls[i].pc.iceConnectionState == "failed" || client.pulls[i].pc.iceConnectionState == "closed"))
+            {
+                if (client.pulls[i].dc) {
+                    client.pulls[i].dc.close();
+                }
+                continue;
+            }
             if (!client.pulls[i].dc || client.pulls[i].dc.readyState == "closing" || client.pulls[i].dc.readyState == "closed")
                 if (selector.pullState != "connecting" || !client.pulls[i].pc)
                     continue;
@@ -145,6 +206,14 @@ var selector = {
         // Clear the closed push target
         var pushs = [];
         for (var i = 0;i < client.pushs.length;i++) {
+            if (client.pushs[i].pc && (client.pushs[i].pc.iceConnectionState == "disconnected" ||
+                client.pushs[i].pc.iceConnectionState == "failed" || client.pushs[i].pc.iceConnectionState == "closed"))
+            {
+                if (client.pushs[i].dc) {
+                    client.pushs[i].dc.close();
+                }
+                continue;
+            }
             if (!client.pushs[i].dc || client.pushs[i].dc.readyState == "closing" || client.pushs[i].dc.readyState == "closed")
                 if (selector.pushState != "connecting" || !client.pushs[i].pc)
                     continue;
@@ -187,7 +256,8 @@ var selector = {
                     }
                     client.pulls.push({
                         pc: newSocket,
-                        remote: external
+                        remote: external,
+                        startTime: new Date().getTime()
                     });
                 } else {
                     console.error("assert type PeerConnection");
@@ -209,7 +279,8 @@ var selector = {
                     }
                     client.pushs.push({
                         pc: newSocket,
-                        remote: external
+                        remote: external,
+                        startTime: new Date().getTime()
                     });
                 } else {
                     console.error("assert type PeerConnection");
@@ -240,7 +311,7 @@ var selector = {
                         };
                     };
                     client.pullNum = availablePullSource + 1;
-                    //selector.pullState = "pull";
+                    selector.pullState = "pull";
                     //For debug eaily 1to1
                 } else {
                     console.log("only process a pull at one time");
@@ -318,6 +389,13 @@ $.get("http://127.0.0.1:8080/tracker", function(data) {
                 selector.refresh("directPull", directwsclient);
                 break;
             case "push":
+                for (var i = 0; i < client.pushs.length; i++) {
+                    console.log(client.pushs[i].remote);
+                    if (client.pushs[i].remote == msg.address) {
+
+                        return;
+                    }
+                }
                 var address = msg.address;
                 pc = new PeerConnection({"iceServers": []});
                 pc.onicecandidate = function(event){
@@ -355,10 +433,19 @@ $.get("http://127.0.0.1:8080/tracker", function(data) {
                         "address": address
                     }));
                 });
-
+                console.log(pc);
                 selector.refresh("pushing", pc, address);
                 break;
-            case "pull":    // New Version complete
+            case "pull":
+                for (var i = 0; i < client.pulls.length; i++) {
+
+                    if (client.pulls[i].remote == msg.address) {
+                        console.log(client.pulls[i].remote + " has already been pull source, try get another");
+                        setTimeout(function() {trackerWS.send(JSON.stringify({method: "getSource"})); },
+                            500);
+                        return;
+                    }
+                }
                 pc = new PeerConnection({"iceServers": []});
                 var address = msg.address;
                 pc.onicecandidate = function(event){
@@ -411,7 +498,7 @@ $.get("http://127.0.0.1:8080/tracker", function(data) {
                         console.log('Data channel is created!');
                         pull.dc = ev.channel;
                         selector.refresh("pull", pull.dc);
-                        //trackerWS.send(JSON.stringify({method: "getSource"}));
+                        trackerWS.send(JSON.stringify({method: "getSource"}));
                     };
                 } else {
                     // TODO
@@ -445,5 +532,6 @@ $.get("http://127.0.0.1:8080/tracker", function(data) {
 //TODO List
 // 互相建立的DataChannel其实收不到数据 -- solve
 // chrome如果不渲染，cache里面会积累大量数据，然后导致线程卡死 -- solve
-// 第3个客户端连入的情况
+// 第3个客户端连入的情况 -- solve
 // 解码器速度堪忧 考虑换其他解码器
+// 在某个push源push数量满的时候，pull会感知不到，故而卡死
