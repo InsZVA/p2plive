@@ -18,23 +18,36 @@ var client = {
     pushNum: 0, //the number of clients this client push to
     pulls: [],
     pushs: [],
-    forwardTimes: 0
+    forwardTimes: 0,
+    delay: 0
 };
 var getSourceTimer, updateTimer;
 
 var canvas, player, directwsclient;
 canvas = document.getElementById('videoCanvas');
 
+var debug = true;
+
+var update = function() {
+    trackerWS.send(JSON.stringify({
+        method: "update",
+        pullNum: client.pullNum,
+        pushNum: client.pushNum
+    }));
+};
+
 var selector = {
     pullState: 'close',
     pushState: 'close',
     cacheTime: 1000,
-    interval: 100,
+    interval: 1,
     onmessage: null,
     onopen: null,
     onerror: null,
     onclose: null,
     pcTimeout: 1000,
+    analyseDuration: 10000,
+    analyseInterval: 1000,
     maxCachedPackets: 32,  // to avoid the cache too large(when chrome doesn't render)
     open: function() {
         setInterval(this.playTimer, this.interval);
@@ -42,33 +55,10 @@ var selector = {
         //setInterval(this.whoisyourdaddyCHROME, 1000);
         this.onopen();
     },
-    whoisyourdaddyCHROME: function() {
-        // chrome你他妈！RTCPeerconnection被对方关闭不会onclose，而且，如果在没来得及发送ice的时候被关闭
-        // 将会毫无知觉的变成一个new？？？exo？
-        var pulls = [];
-        for (var i = 0; i < client.pulls.length; i++) {
-            if (!client.pulls[i].cache && client.pulls[i].pc &&
-                (client.pulls[i].pc.iceConnectionState == "new" && new Date().getTime() - client.pulls[i].startTime > selector.pcTimeout
-                || client.pulls[i].pc.iceConnectionState == "closed")) {
-                client.pulls[i].pc.close();
-                if (availablePullSource < MAX_PULL_NUM)
-                    setTimeout(function() {
-                        trackerWS.send(JSON.stringify({method: "getSource"}));
-                    }, 500);
-            } else {
-                pulls.push(client.pulls[i]);
-            }
-        }
-        client.pulls = pulls;
-
-        selector.refreshPushingTarget();
-        var availablePullSource = selector.refreshAvailablePuller();
-
-    },
     playTimer: function() {
 
         // Find better pull source & get earliest create time packet
-        var minCreateTime = 999999999;
+        var minCreateTime = 9999999999999;
         var preferId = -1;
         var kills = [];
         for (var i = 0; i < client.pulls.length; i++) {
@@ -76,7 +66,7 @@ var selector = {
             if (cache == undefined) {
                 if (client.pulls[i].startTime && new Date().getTime() - client.pulls[i].startTime > selector.pcTimeout) {
                     kills.push(i);
-                    console.log("kill" + i);
+                    console.log("kill:" + i);
                 }
                 continue;
             }
@@ -117,6 +107,21 @@ var selector = {
                         var messageData = new Uint8Array(client.pulls[preferId].cache[i].event.data);
                         messageData[6] = messageData[6]+1;
                         client.pushs[j].dc.send(messageData);
+
+                        //Analyse
+                        var push = client.pushs[j];
+                        var t = new Date().getTime();
+                        if (t - push.analyseLoopTime < selector.analyseInterval) {
+                            push.sendBytes[0] = push.sendBytes[0] ? push.sendBytes[0]
+                            + messageData.length : messageData.length;
+                        } else {
+                            var loops = selector.analyseDuration / selector.analyseInterval;
+                            for (var i = loops - 1; i > 0; i--) {
+                                push.sendBytes[i] = push.sendBytes[i - 1];
+                            }
+                            push.sendBytes[0] = messageData.length;
+                            push.analyseLoopTime = t;
+                        }
                     }
                     client.pulls[preferId].cache[i].sent = true;
                 }
@@ -132,7 +137,17 @@ var selector = {
             if (client.pulls[preferId].cache[i].createTime < overtime) {
                 var messageData = new Uint8Array(client.pulls[preferId].cache[i].event.data);
                 client.pulls[preferId].cache[i].event.data = messageData.slice(11);
-                selector.onmessage(client.pulls[preferId].cache[i].event);
+                if (!document.hidden)
+                    selector.onmessage(client.pulls[preferId].cache[i].event);
+
+                //Analyse
+                client.forwardTimes = client.pulls[preferId].cache[i].forwardTimes;
+                var delays = 0;
+                for (var j = 0; j < selector.analyseDuration / selector.analyseInterval; j++) {
+                    if (client.pulls[preferId] && client.pulls[preferId].delay && client.pulls[preferId].delay[j])
+                        delays += client.pulls[preferId].delay[j];
+                }
+                client.delay = delays / (selector.analyseDuration / selector.analyseInterval);
             } else {
                 break;
             }
@@ -242,28 +257,30 @@ var selector = {
                     if (selector.pullState == "direct") {
                         console.log("already has direct pull source!");
                         newSocket.close();
-                        return;
+                        break;
                     }
                     if (availablePullSource >= MAX_PULL_NUM) {
                         console.log("already has enough pull source!");
                         newSocket.close();
-                        return;
+                        break;
                     }
                     if (selector.pullState == "connecting") {
                         console.log("only process a socket in one time");
                         newSocket.close();
-                        return;
+                        break;
                     }
                     client.pulls.push({
                         pc: newSocket,
                         remote: external,
-                        startTime: new Date().getTime()
+                        startTime: new Date().getTime(),
+                        receiveBytes: [],
+                        delay: [],
+                        analyseLoopTime: new Date().getTime()
                     });
                 } else {
                     console.error("assert type PeerConnection");
                 }
                 selector.pullState = "connecting";
-                client.pullNum = availablePullSource + 1;
                 break;
             case "pushing":
                 var pushingTarget = selector.refreshPushingTarget();
@@ -271,7 +288,7 @@ var selector = {
                     if (selector.pullState == "connecting") {
                         newSocket.close();
                         client.pushNum = pushingTarget;
-                        return;
+                        break;
                     }
                     if (pushingTarget >= MAX_PULL_NUM) {
                         console.log("already push many targets!");
@@ -280,13 +297,14 @@ var selector = {
                     client.pushs.push({
                         pc: newSocket,
                         remote: external,
-                        startTime: new Date().getTime()
+                        startTime: new Date().getTime(),
+                        sendBytes: [],
+                        analyseLoopTime: new Date().getTime()
                     });
                 } else {
                     console.error("assert type PeerConnection");
                 }
                 selector.pushState = "connecting";
-                client.pushNum = pushingTarget + 1;
                 break;
             case 'pull':
                 if (selector.pullState == 'connecting') {
@@ -300,17 +318,35 @@ var selector = {
                             var messageData = new Uint8Array(event.data);
                             var cache = {};
                             cache.forwardTimes = messageData[6];
-                            cache.createTime = messageData[7] + messageData[8] * 256 + messageData[9] * 256*256 +
-                                messageData[10] * 256*256;
+                            cache.createTime = messageData[7] + messageData[8] * 256 + messageData[9] * 256 * 256 +
+                                messageData[10] * 256 * 256 * 256;
+                            cache.createTime *= 1000;
                             cache.event = event;
                             //if (pull.cache.length < selector.maxCachedPackets)
-                                pull.cache.push(cache);
+                            pull.cache.push(cache);
+
+                            //Analyse
+                            var t = new Date().getTime();
+                            if (t - pull.analyseLoopTime < selector.analyseInterval) {
+                                pull.receiveBytes[0] = pull.receiveBytes[0] ? pull.receiveBytes[0]
+                                + messageData.length : messageData.length;
+                                pull.delay[0] = t - cache.createTime;
+                            } else {
+                                var loops = selector.analyseDuration / selector.analyseInterval;
+                                for (var i = loops - 1; i > 0; i--) {
+                                    pull.receiveBytes[i] = pull.receiveBytes[i - 1];
+                                    pull.delay[i] = pull.delay[i - 1];
+                                }
+                                pull.receiveBytes[0] = messageData.length;
+                                pull.delay[0] = t - cache.createTime;
+                                pull.analyseLoopTime = t;
+                            }
                         };
-                        newSocket.onclose = function() {
+                        newSocket.onclose = function () {
                             trackerWS.send(JSON.stringify({method: "getSource"}));
                         };
                     };
-                    client.pullNum = availablePullSource + 1;
+                    client.pullNum = selector.refreshAvailablePuller();
                     selector.pullState = "pull";
                     //For debug eaily 1to1
                 } else {
@@ -325,6 +361,7 @@ var selector = {
                     console.log(client);
                     push.dc = newSocket;
                     client.pushNum = pushingTarget + 1;
+
                 }
 
                 break;
@@ -344,28 +381,51 @@ var selector = {
                 client.pulls = [];
                 client.pulls.push({
                     ws: newSocket,
-                    cache: []
+                    cache: [],
+                    receiveBytes: [],
+                    delay: [],
+                    analyseLoopTime: new Date().getTime()
                 });
                 var pull = client.pulls[0];
-                newSocket.onopen = function() {
+                newSocket.onopen = function () {
                     newSocket.binaryType = 'arraybuffer';
-                    newSocket.onmessage = function(event) {
+                    newSocket.onmessage = function (event) {
                         var messageData = new Uint8Array(event.data);
                         var cache = {};
                         cache.forwardTimes = messageData[6];
-                        cache.createTime = messageData[7] + messageData[8] * 256 + messageData[9] * 256*256 +
-                            messageData[10] * 256*256;
+                        cache.createTime = messageData[7] + messageData[8] * 256 + messageData[9] * 256 * 256 +
+                            messageData[10] * 256 * 256 * 256;
+                        cache.createTime *= 1000;
                         cache.event = event;
                         //if (pull.cache.length < selector.maxCachedPackets)
-                            pull.cache.push(cache);
+                        pull.cache.push(cache);
+
+                        //Analyse
+                        var t = new Date().getTime();
+                        if (t - pull.analyseLoopTime < selector.analyseInterval) {
+                            pull.receiveBytes[0] = pull.receiveBytes[0] ? pull.receiveBytes[0]
+                            + messageData.length : messageData.length;
+                            pull.delay[0] = t - cache.createTime;
+                        } else {
+                            var loops = selector.analyseDuration / selector.analyseInterval;
+                            for (var i = loops - 1; i > 0; i--) {
+                                pull.receiveBytes[i] = pull.receiveBytes[i - 1];
+                                pull.delay[i] = pull.delay[i - 1];
+                            }
+                            pull.receiveBytes[0] = messageData.length;
+                            pull.delay[0] = t - cache.createTime;
+                            pull.analyseLoopTime = t;
+                        }
+                        ;
+                        newSocket.onclose = function () {
+                            trackerWS.send(JSON.stringify({method: "getSource"}));
+                        };
                     };
-                    newSocket.onclose = function() {
-                        trackerWS.send(JSON.stringify({method: "getSource"}));
-                    };
+                    client.pullNum = 1;
+                    selector.pullState = "directPull";
                 };
-                client.pullNum = 1;
-                this.pullState = "directPull";
         }
+        update();
     }
 };
 
@@ -515,19 +575,59 @@ $.get("http://127.0.0.1:8080/tracker", function(data) {
         }
     };
 
-    var update = function() {
-        trackerWS.send(JSON.stringify({
-            method: "update",
-            pullNum: client.pullNum,
-            pushNum: client.pushNum
-        }));
-    };
-
     trackerWS.onopen = function() {
         trackerWS.send(JSON.stringify({method: "getSource"}));
         updateTimer = setInterval(update, UPDATE_INTERVAL);
     }
 });
+
+if (debug) {
+    var debugDiv = document.createElement("div");
+    debugDiv.setAttribute("style", "position:absolute; right: 20px; font-size: 16px; top: 20px; color: red");
+    document.body.appendChild(debugDiv);
+    setInterval(function(){
+        if (!client.pulls || client.pulls.length == 0) return;
+        var s = "拉流信息：<br>";
+        if (selector.pullState == "directPull") {
+            s += "直接从服务器拉取：";
+            var rate = 0;
+            for (var i = 0; i < selector.analyseDuration / selector.analyseInterval; i++) {
+                if (client.pulls[0] && client.pulls[0].receiveBytes[i])
+                    rate += client.pulls[0].receiveBytes[i];
+            }
+            rate = rate / (selector.analyseDuration / selector.analyseInterval);
+            s += rate/128 + "KBps<br>";
+        } else {
+            for (var i = 0; i < client.pulls.length; i++) {
+                s += client.pulls[i].remote + ":";
+                var rate = 0;
+                for (var j = 0; j < selector.analyseDuration / selector.analyseInterval; j++) {
+                    if (client.pulls[i] && client.pulls[i].receiveBytes[j])
+                        rate += client.pulls[i].receiveBytes[j];
+                }
+                rate = rate / (selector.analyseDuration / selector.analyseInterval);
+                s += rate/128 + "KBps<br>";
+            }
+        }
+        s += "最优转发次数：" + client.forwardTimes + "<br>";
+        s += "平均延迟：" + client.delay + "ms<br>";
+
+        s += "推流信息：<br>";
+        for (var i = 0; i < client.pushs.length; i++) {
+            s += client.pushs[i].remote + ":";
+            var rate = 0;
+            for (var j = 0; j < selector.analyseDuration / selector.analyseInterval; j++) {
+                if (client.pushs[i] && client.pushs[i].sendBytes[j])
+                    rate += client.pushs[i].sendBytes[j];
+            }
+            rate = rate / (selector.analyseDuration / selector.analyseInterval);
+            s += rate/128 + "KBps<br>";
+        }
+
+        debugDiv.innerHTML = s;
+    }, 1000
+    )
+}
 
 //TODO List
 // 互相建立的DataChannel其实收不到数据 -- solve

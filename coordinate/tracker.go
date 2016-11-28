@@ -150,7 +150,7 @@ func LookupRegion(address string) int { // Warning: IpV4 only
 		return -1
 	}
 
-	if ip[0] == 10 {
+	if ip[0] == 10 || ip[0] == 222 {
 		return 0
 	}
 

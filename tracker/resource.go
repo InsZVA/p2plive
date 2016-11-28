@@ -17,7 +17,7 @@ const (
 	// The number the forward server can service best
 	// If clients number is less than it,
 	// client will pull from forward server directly
-	FORWARD_BEST_SERVICE_NUM = 1
+	FORWARD_BEST_SERVICE_NUM = 2
 
 	USERAGENT_MAX_PUSHNUM = 3
 
@@ -84,7 +84,7 @@ func RemoveClient(ipaddress string) {
 	PeekSourceClient peek a good client to push P2P stream to another
 	Returns "" when it should be a forward server better
 */
-func PeekSourceClient() string {
+func PeekSourceClient(puller string) string {
 	ClientsMutex.Lock()
 	defer ClientsMutex.Unlock()
 	if int(atomic.LoadInt32(&ClientsNumDirectPull)) < FORWARD_BEST_SERVICE_NUM*ForwardsAvaliable {
@@ -99,6 +99,9 @@ func PeekSourceClient() string {
 			continue
 		}
 		if client.PullNum == 0 {
+			continue
+		}
+		if ipaddress == puller {
 			continue
 		}
 		if best == "" || client.ForwardTimes < Clients[best].ForwardTimes {
@@ -196,7 +199,7 @@ func ResourceHandler(w http.ResponseWriter, r *http.Request) {
 		switch method {
 		case "getSource":
 			if Clients[ipaddress].PullNum < 2 && Clients[ipaddress].ForwardTimes != 1 {
-				pusherIpAddress := PeekSourceClient()
+				pusherIpAddress := PeekSourceClient(ipaddress)
 				if pusherIpAddress == "" {
 					//forwardAddress := PeekSourceServer()
 					c := Clients[ipaddress]
