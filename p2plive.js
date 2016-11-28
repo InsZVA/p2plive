@@ -28,6 +28,14 @@ canvas = document.getElementById('videoCanvas');
 
 var debug = true;
 
+var pcConfig = {"iceServers": [{
+    "url": "stun:stun.voipbuster.com:19302"
+}, {
+    "url": "turn:115.159.227.38",
+    "username": "inszva",
+    "credential": "0x471150246375ea14baaf678d678ceada"
+}]};
+
 var update = function() {
     trackerWS.send(JSON.stringify({
         method: "update",
@@ -457,7 +465,7 @@ $.get("http://127.0.0.1:8080/tracker", function(data) {
                     }
                 }
                 var address = msg.address;
-                pc = new PeerConnection({"iceServers": []});
+                pc = new PeerConnection(pcConfig);
                 pc.onicecandidate = function(event){
                     trackerWS.send(JSON.stringify({
                         "method": "candidate",
@@ -506,7 +514,7 @@ $.get("http://127.0.0.1:8080/tracker", function(data) {
                         return;
                     }
                 }
-                pc = new PeerConnection({"iceServers": []});
+                pc = new PeerConnection(pcConfig);
                 var address = msg.address;
                 pc.onicecandidate = function(event){
                     trackerWS.send(JSON.stringify({
