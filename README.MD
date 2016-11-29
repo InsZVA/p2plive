@@ -40,7 +40,7 @@ With the default params in `tracker` and `forward` codes, the first client is pu
  that is to say, **P2P transfer**. And you can aslo put many `tracker` and `forward` to different severs in different regions, and modify the 
 region detect codes in `coordinate` so that you run a big system.
 
-*However, the nat escape has not been implemented(maybe using stun or turn). Comming soon!* 
+The nat escape has been implemented, and will be optimized soon.
 
 ## Push Stream
 
