@@ -18,6 +18,7 @@ var client = {
     pushNum: 0, //the number of clients this client push to
     pulls: [],
     pushs: [],
+    preferId: -1,
     forwardTimes: 0,
     delay: 0
 };
@@ -28,13 +29,15 @@ canvas = document.getElementById('videoCanvas');
 
 var debug = true;
 
-var pcConfig = {"iceServers": [{
+var pcConfig2 = {"iceServers": [{
     "url": "stun:stun.voipbuster.com:19302"
 }, {
     "url": "turn:115.159.227.38",
     "username": "inszva",
     "credential": "0x471150246375ea14baaf678d678ceada"
 }]};
+
+var pcConfig = {"iceServers": []};
 
 var update = function() {
     trackerWS.send(JSON.stringify({
@@ -103,38 +106,9 @@ var selector = {
             selector.pullState = "close";
             trackerWS.send(JSON.stringify({method: "getSource"}));
         }
-
+        if (client.preferId == -1)
+            client.preferId = preferId;
         if (preferId == -1) return;
-
-        //Forward
-
-        for (var i = 0; i < client.pulls[preferId].cache.length; i++) {
-            if (client.pulls[preferId].cache[i].sent == undefined) {
-                for (var j = 0; j < client.pushs.length; j++) {
-                    if (client.pushs[j].dc && client.pushs[j].dc.readyState == "open") {
-                        var messageData = new Uint8Array(client.pulls[preferId].cache[i].event.data);
-                        messageData[6] = messageData[6]+1;
-                        client.pushs[j].dc.send(messageData);
-
-                        //Analyse
-                        var push = client.pushs[j];
-                        var t = new Date().getTime();
-                        if (t - push.analyseLoopTime < selector.analyseInterval) {
-                            push.sendBytes[0] = push.sendBytes[0] ? push.sendBytes[0]
-                            + messageData.length : messageData.length;
-                        } else {
-                            var loops = selector.analyseDuration / selector.analyseInterval;
-                            for (var i = loops - 1; i > 0; i--) {
-                                push.sendBytes[i] = push.sendBytes[i - 1];
-                            }
-                            push.sendBytes[0] = messageData.length;
-                            push.analyseLoopTime = t;
-                        }
-                    }
-                    client.pulls[preferId].cache[i].sent = true;
-                }
-            }
-        }
 
         var overtime = minCreateTime + selector.cacheTime;
 
@@ -170,33 +144,6 @@ var selector = {
             client.pulls[i].cache = client.pulls[i].cache.slice(j);
         }
 
-    },
-    forwardTimer: function() {
-
-        // Find better pull source
-        var preferId = -1;
-        for (var i = 0; i < client.pulls.length; i++) {
-            var cache = client.pulls[i].cache;
-            if (cache == undefined) continue;
-            if (cache[0] && (preferId == -1 || [0].forwardTimes < client.pulls[preferId].cache[0].forwardTimes))
-                preferId = i;
-        }
-
-        // Forward packet & mark it to avoid twice forward
-        // These packet in cache will be cleaned in play timer finally
-        if (preferId == -1) return;
-        for (var i = 0; i < client.pulls[preferId].cache.length; i++) {
-            if (client.pulls[preferId].cache[i].sent == undefined) {
-                for (var j = 0; j < client.pushs.length; j++) {
-                    if (client.pushs[j].dc && client.pushs[j].dc.readyState == "open") {
-                        var messageData = new Uint8Array(client.pulls[preferId].cache[i].event.data);
-                        messageData[6] = messageData[6]+1;
-                        client.pushs[j].dc.send(messageData);
-                    }
-                    client.pulls[preferId].cache[i].sent = true;
-                }
-            }
-        }
     },
     refreshAvailablePuller: function() {
         var availablePullSource = 0;
@@ -333,6 +280,33 @@ var selector = {
                             //if (pull.cache.length < selector.maxCachedPackets)
                             pull.cache.push(cache);
 
+                            //Forward
+                            if (client.pulls[client.preferId] &&
+                                client.pulls[client.preferId].dc &&
+                                client.pulls[client.preferId].dc == newSocket ) {
+                                for (var j = 0; j < client.pushs.length; j++) {
+                                    if (client.pushs[j].dc && client.pushs[j].dc.readyState == "open") {
+                                        messageData[6] = messageData[6]+1;
+                                        client.pushs[j].dc.send(messageData);
+
+                                        //Analyse
+                                        var push = client.pushs[j];
+                                        var t = new Date().getTime();
+                                        if (t - push.analyseLoopTime < selector.analyseInterval) {
+                                            push.sendBytes[0] = push.sendBytes[0] ? push.sendBytes[0]
+                                            + messageData.length : messageData.length;
+                                        } else {
+                                            var loops = selector.analyseDuration / selector.analyseInterval;
+                                            for (var i = loops - 1; i > 0; i--) {
+                                                push.sendBytes[i] = push.sendBytes[i - 1];
+                                            }
+                                            push.sendBytes[0] = messageData.length;
+                                            push.analyseLoopTime = t;
+                                        }
+                                    }
+                                }
+                            }
+
                             //Analyse
                             var t = new Date().getTime();
                             if (t - pull.analyseLoopTime < selector.analyseInterval) {
@@ -383,7 +357,7 @@ var selector = {
                         client.pulls[i].ws.close();
                     }
                     if (client.pulls[i].dc) {
-                        client.pulls[i].close();
+                        client.pulls[i].dc.close();
                     }
                 }
                 client.pulls = [];
@@ -407,6 +381,32 @@ var selector = {
                         cache.event = event;
                         //if (pull.cache.length < selector.maxCachedPackets)
                         pull.cache.push(cache);
+
+                        //Forward
+                        if (client.pulls[client.preferId] && client.pulls[client.preferId].ws &&
+                            client.pulls[client.preferId].ws == newSocket ) {
+                            for (var j = 0; j < client.pushs.length; j++) {
+                                if (client.pushs[j].dc && client.pushs[j].dc.readyState == "open") {
+                                    messageData[6] = messageData[6]+1;
+                                    client.pushs[j].dc.send(messageData);
+
+                                    //Analyse
+                                    var push = client.pushs[j];
+                                    var t = new Date().getTime();
+                                    if (t - push.analyseLoopTime < selector.analyseInterval) {
+                                        push.sendBytes[0] = push.sendBytes[0] ? push.sendBytes[0]
+                                        + messageData.length : messageData.length;
+                                    } else {
+                                        var loops = selector.analyseDuration / selector.analyseInterval;
+                                        for (var i = loops - 1; i > 0; i--) {
+                                            push.sendBytes[i] = push.sendBytes[i - 1];
+                                        }
+                                        push.sendBytes[0] = messageData.length;
+                                        push.analyseLoopTime = t;
+                                    }
+                                }
+                            }
+                        }
 
                         //Analyse
                         var t = new Date().getTime();
@@ -591,7 +591,7 @@ $.get("http://127.0.0.1:8080/tracker", function(data) {
 
 if (debug) {
     var debugDiv = document.createElement("div");
-    debugDiv.setAttribute("style", "position:absolute; right: 20px; font-size: 16px; top: 20px; color: red");
+    debugDiv.setAttribute("style", "position:absolute; right: 20px; font-size: 16px; top: 20px; color: red; text-align:left");
     document.body.appendChild(debugDiv);
     setInterval(function(){
         if (!client.pulls || client.pulls.length == 0) return;
@@ -618,7 +618,7 @@ if (debug) {
             }
         }
         s += "最优转发次数：" + client.forwardTimes + "<br>";
-        s += "平均延迟：" + client.delay + "ms<br>";
+        s += "平均延迟（10s内都算优）：" + client.delay + "ms<br>";
 
         s += "推流信息：<br>";
         for (var i = 0; i < client.pushs.length; i++) {
@@ -642,4 +642,5 @@ if (debug) {
 // chrome如果不渲染，cache里面会积累大量数据，然后导致线程卡死 -- solve
 // 第3个客户端连入的情况 -- solve
 // 解码器速度堪忧 考虑换其他解码器
-// 在某个push源push数量满的时候，pull会感知不到，故而卡死
+// 在某个push源push数量满的时候，pull会感知不到，故而卡死 -- solve
+// STUN服务器太慢，导致延迟叠加
