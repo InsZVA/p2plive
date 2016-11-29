@@ -1,9 +1,9 @@
 package main
 
 import (
+	"math/rand"
 	"net/http"
 	"strconv"
-	_ "strings"
 	"sync"
 
 	"sync/atomic"
@@ -104,7 +104,7 @@ func PeekSourceClient(puller string) string {
 		if ipaddress == puller {
 			continue
 		}
-		if best == "" || client.ForwardTimes < Clients[best].ForwardTimes {
+		if rand.Int()&1 == 0 && (best == "" || client.ForwardTimes < Clients[best].ForwardTimes) {
 			best = ipaddress
 		}
 		// To save time, search 50 clients too more

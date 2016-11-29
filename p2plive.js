@@ -29,7 +29,7 @@ canvas = document.getElementById('videoCanvas');
 
 var debug = true;
 
-var pcConfig2 = {"iceServers": [{
+var pcConfig = {"iceServers": [{
     "url": "stun:stun.voipbuster.com:19302"
 }, {
     "url": "turn:115.159.227.38",
@@ -37,7 +37,7 @@ var pcConfig2 = {"iceServers": [{
     "credential": "0x471150246375ea14baaf678d678ceada"
 }]};
 
-var pcConfig = {"iceServers": []};
+//var pcConfig = {"iceServers": []};
 
 var update = function() {
     trackerWS.send(JSON.stringify({
