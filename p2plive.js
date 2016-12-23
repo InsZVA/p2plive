@@ -30,7 +30,7 @@ canvas = document.getElementById('videoCanvas');
 var debug = true;
 
 var pcConfig = {"iceServers": [{
-    "url": "stun:stun.voipbuster.com:19302"
+    "url": "stun:115.159.227.38:3478"
 }, {
     "url": "turn:115.159.227.38",
     "username": "inszva",
@@ -51,7 +51,7 @@ var selector = {
     pullState: 'close',
     pushState: 'close',
     cacheTime: 1000,
-    interval: 1,
+    interval: 50,
     onmessage: null,
     onopen: null,
     onerror: null,
@@ -64,6 +64,7 @@ var selector = {
         setInterval(this.playTimer, this.interval);
         //setInterval(this.forwardTimer, this.interval);
         //setInterval(this.whoisyourdaddyCHROME, 1000);
+
         this.onopen();
     },
     playTimer: function() {
